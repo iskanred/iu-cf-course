@@ -113,8 +113,9 @@
 ### 2.
 >[!Task Description]
 > Select at least two malware that you want to analyse in the sandbox VM that you prepared in Task 1.
-- The second malware I selected was ransomware **`Ransomware.Mamba`**. I also unzipped it to the `~/malwares/mamba`
-	![[Pasted image 20250504015315.png]]
+- The second malware I selected was ransomware **`Win32.Vobfus`**. I also unzipped it to the `~/malwares/vobfus`
+	![[Pasted image 20250506013738.png]]
+- There were several executables, so I selected the first one called **`323CANON.EXE_WORM_VOBFUS.SM01`**
 ## Task 3 - Sandbox Analysis
 ---
 ### 1.
@@ -125,6 +126,7 @@
 - Finally, I submitted **`VBS.LoveLetter`**  for analysis to sandbox
 	![[Pasted image 20250504090355.png]]
 	![[Pasted image 20250504222351.png]]
+- The score is $5.6 / 10$
 ##### Artifacts
 ###### Malware file
 - The malware file is called `VBS.LoveLetter.txt.vbs`. Its size is only 9.5Kb which seems actually small.
@@ -169,6 +171,8 @@
 	![[Pasted image 20250505000200.png]]
 - And corresponding DNS, [LLMNR](https://en.wikipedia.org/wiki/Link-Local_Multicast_Name_Resolution), and [Mailslot](https://ru.wikipedia.org/wiki/Mailslot) packets
 	![[Pasted image 20250505002333.png]]
+- Also, I found no suspicious URLs inside the processing memory barring to `http://skyinet.net`. Others seem to be generated and used by the system.
+	![[Pasted image 20250505070434.png]]
 - In summary, **nothing really interesting happened in a network**
 ##### Script
 - Now let's check what does the original and replicated `.VBS` script do
@@ -192,52 +196,190 @@
 		![[Pasted image 20250505034209.png]]
 	- Below is the HTML file for for a e-mail that contains a script
 		![[Pasted image 20250505040733.png]]
-#### Mamba
+#### Vobfus
 ##### Submission
-- After that, I submitted **`Ransomware.Mambacuckoo community`**
-- 
+- After that, I submitted **`323CANON.EXE_WORM_VOBFUS.SM01`**
+	![[Pasted image 20250506014041.png]]
+	![[Pasted image 20250506014220.png]]
+- The score is $5.4 / 10$
 ##### Artifacts
 ###### Malware file
-- 
-- 
+- The file **`323CANON.EXE_WORM_VOBFUS.SM01`** is a `PE32` executable file for Intel 80386 architecture which is designed to be executed on Windows.
+	![[Pasted image 20250506015407.png]]
+- It is the standard format for executables on Windows NT-based systems, including files such as `.exe`, `.dll`, `.sys`, and `.mui`. At its core, the PE format is a structured data container that gives the Windows operating system loader everything it needs to properly manage the executable code it contains. This includes references for dynamically linked libraries, tables for importing and exporting APIs, resource management data and thread-local storage (TLS) information.
+- I checked `SM01` file extension but have not found anything which could mean the **file extension is a fiction**. The same is applied to other file extensions in the archive `Win32.Vobfus.zip`: `SMA3`, `SMIS`, `SMM2`.
 ###### Registry modifications
-- 
-- 
+- The malware created an executable `doudi.exe` which was installed for autorun at Windows startup with different options
+	![[Pasted image 20250506025902.png]]
+- What is more, the malware tried to prevent hidden file from being displayed
+	![[Pasted image 20250506030003.png]]
+- And this action was only once run by the original malware file and many times by the generated executable `doudi.exe`
+	![[Pasted image 20250506030500.png]]
+- The same happened to installing `doudi.exe` to autorun
+	![[Pasted image 20250506030901.png]]
+- This gave me an idea that both **putting an executable at system startup** and **file hiding** was scheduled to be **executed continuously** in order to avoid manual change in settings.
 ###### Files
-- 
-- 
+- This malware spawns a file `C:\Users\cuckoo\doudi.exe` and executes it
+	![[Pasted image 20250506031804.png]]
+	![[Pasted image 20250506050343.png]]
+- Also, the program tried to create the network socket file with a write access which is be shared to other files. `AFD` is the user-mode interface to the Windows TCP/IP stack. Any network activity (HTTP, FTP, etc.) goes through AFD. This means that the malware could prepare the environment for network access.
+	![[Pasted image 20250506032717.png]]
+###### Processes
+- The PID of `323CANON.EXE_WORM_VOBFUS.SM01` is `2160`, while PID of `doudi.exe` is `200`
+	![[Pasted image 20250506031931.png]]
+- An interesting thing is that the original process was involved only 43 pages of events
+	![[Pasted image 20250506033127.png]]
+- Meanwhile, a majority of events was happened to its child process $= 1382$ pages
+	![[Pasted image 20250506033244.png]]
+- At the same time the malware listed all the processes being run for some reason. It might need to detect antivirus software and close it.
+	![[Pasted image 20250506033435.png]]
+- Another signature identified an interest in a `smss.exe` process which is an analogue to `init` process in Linux. However, it was only listed as other processes and other processes were listed many times too. So, I think this signature is **false positive**.
+	![[Pasted image 20250506034315.png]]
+###### Memory
+- The malware faced 15 kernel level exceptions while being executed. All this exceptions are related to the `msvbvm60.dll` shared library. This DLL is a Visual Basic 6 runtime. Exception code `0xc000008f` translates as `STATUS_FLOAT_INVALID_OPERATION` which can tell about memory corruption while performing `leave` instruction.
+	![[Pasted image 20250506042705.png]]
+- Such an exception could happen in the following cases:
+	1. Malicious software tried to access or execute a part of memory it shouldn't. For example, it could exploit [CVE-2018-8174](https://www.cve.org/CVERecord?id=CVE-2018-8174) vulnerability.
+		![[Pasted image 20250506045033.png]]
+	2. It was an intended exception to bypass some checks as described in this [artice](https://billdemirkapi.me/abusing-exceptions-for-code-execution-part-2/).
+		![[Pasted image 20250506044407.png]]
+- Overall, we can see that `msvbvm60.dll` was used in malware's source code. This indicates the the **malware written in VB6**.
+	![[Pasted image 20250506045255.png]]
+- What else, I got the message that the malware changed its virtual memory permission to execute code inside the memory. This again may tell that it injects some executable code to its memory.
+	![[Pasted image 20250506045700.png]]
+	![[Pasted image 20250506050032.png]]
 ###### Network
-- 
-- 
+- First, I checked URLs in process memory dump. There are 495 URLs of popular websites (wikipedia, google, adobe, different media)
+	![[Pasted image 20250506051310.png]]
+- Some of these URLs contain links to different certificates and certificates authorities
+	![[Pasted image 20250506051601.png]]
+- HTTP was executed once and it was just `www.msftncsi.com` for Windows system to check internet access.
+	![[Pasted image 20250506052212.png]]
+- Nevertheless, there were some suspicious DNS requests to `ns1.music*.*` resources and one of them to `ns1.musicmixb.co` was even successful receiving IP address $=$ `34.136.111.81`
+	![[Pasted image 20250506052341.png]]
+- I found that exactly the malicious process `323CANON.EXE_WORM_VOBFUS.SM01` tried to contact this IP address by 8000 port which may be HTTP.
+	![[Pasted image 20250506053118.png]]
+- I haven't found that this address or domain name is malicious, but I found that is was also contacted in other malwares: [Win.Trojan.Acnu-7601993-0](https://otx.alienvault.com/indicator/file/efb10dc40cf2c9cab204959da8954b34ec3b9ebc5476c98ba864cd6694122f9f),  [vobfus](https://any.run/report/328a25ee98030865ce42661e7a3b5848d2835e6e0e633cafad9e56644c1c3d77/42473ccc-4bb4-4a7f-a485-f3520f8d3446). The key moment is that I haven't found any other information about this domain other than it was requested by many different malicious files.
+	![[Pasted image 20250506054235.png]]
+###### Devices
+- It seems also that malware tried to communicate with different devices most probably to replicate itself
+	![[Pasted image 20250506054812.png]]
+	![[Pasted image 20250506054903.png]]
+	![[Pasted image 20250506054944.png]]
 ### 2.
 >[!Task Description]
 > Analyze the behavior of the malware, and then write about what the malware does and what its goal is.
 #### LoveLetter
 - After a thorough examination of the artifacts I can conclude:
 	> This malware is a `RACHUNEK.txt.vbs` file or `RACHUNEK.html.vbs`, which is a malicious Visual Basic Script. It actively distributes itself via IRC, Outlook E-mail, and replacing many files (`js`, `jse`, `css`, `wsh`, `sct`, `hta`, `jpg`, `jpeg`, `bmp`, `gif`, `doc`, `mp3`, `html`, `htm`, `txt`, xls`,` `wri`, `elm`, `dbx`, `avi`, `mpg`, `wav`, `mpeg`) in the system, while deleting the original files (except `doc`, `mp3`, `html`, `htm`, `txt`, `xls`, `wri`, `elm`, `dbx`, `avi`, `mpg`, `wav`, `mpeg`). It also replaces the start page of the Internet Explorer browser with one of the following sites: `www.playboy.com `, `www.o2.pl `, `www.playboy.pl `, or even downloads an executable file WIN-BUGSFIX.exe from the website www.skyinet.net. This program is most likely malicious, but the website is currently unavailable. The script is intended for a Polish audience since the text is Polish: name of file, and e-mail body.
-#### Mamba
-- 
+#### Vobfus
+- After a thorough examination of the artifacts I can conclude:
+	> This malware seems to be a worm which most probably replicates itself to removable devices. It is written in a Visual Basic 6. It spawns a new executable with some random name, runs it, and puts it to autorun at Windows startup which is performed continuously. Another continuous action is to make hidden files not being displayed. It also monitors which processes are launched to detect antivirus or to hide itself if task manager was launched, for instance. It contains a large database of different URLs including certificate authorities. In addition, it communicates with some suspicious addresses. This can lead tell that malware may try to exfiltrate some confidential data or download a trojan. 
 ### 3.
 >[!Task Description]
 > Does the malware have some sandbox detection? If yes, try to defeat/detect the techniques that are used for that.
 #### LoveLetter
 - No
-#### Mamba
-- 
+#### Vobfus
+- Maybe. It monitors currently running process.
+- To defeat antivirus or sandboxes can do:
+	- **Masking**: Some antivirus or sandbox programs can disguise their processes as regular system processes or parts of them, making them less visible to malware.
+	- **Behavioral analysis**: Software can use other techniques to detect a malware even if it is not laucnhed.
+	- **Self-protection**: Antiviruses or sandbox environments use self-protection techniques to prevent stopping them by malwares.
 ### 4.
 >[!Task Description]
 > Extract a memory dump of the sandbox analysis and analyze it using **Volatility** or any other supported tool. Can you trace some of Cuckoo's findings in the dump? (*write any other potential IoC you find*)
+- I have used Volatility which was installed in `~/volatility/vol.py` of version 2.6.1
 #### LoveLetter
-- 
-#### Mamba
-- 
+- For `LoveLetter` I haven't found anything interesting in the memory dump excepted to processes. I tried the following Volatility commands: `pslist`, `malfind`, `pstree`, `cmdscan`, `netscan`, `hivelist`, `printkey`
+##### Processes
+- **Command**:
+	```shell
+	python ~/volatility/vol.py pslist --profile=Win7SP1x64 -f memory.dmp
+	```
+- **Output**:
+	![[Pasted image 20250505075327.png]]
+- **Explanation**:
+	- We can see the `wscript.exe` process was running. This was instantly and easily detected by Cuckoo
+#### Vobfus
+- For `Vobfus` I either haven't found anything exciting in the memory dump or it such an information required much more thorough analysis. Only some commands gave me interesting results.
+##### Processes
+- **Command**:
+	```shell
+	python ~/volatility/vol.py pslist --profile=Win7SP1x64 -f memory.dmp
+	```
+- **Output**:
+	![[Pasted image 20250506061949.png]]
+- **Explanation**:
+	- We see that both malicious processes were run. The original executable had 3 threads.
+###### Network
+- **Command**:
+	```shell
+	python ~/volatility/vol.py netscan --profile=Win7SP1x64 -f memory.dmp
+	```
+- **Output**:
+	![[Pasted image 20250506062517.png]]
+- **Explanation**:
+	 - We see mentioned request to `34.132.102.6:8000` which TCP connection was even established, but no real packets were transmitted, only connection was maintained. This means that through this interface an attacker could gain remote access to the victim's machine. Another scenario is that this interface can be used in data exfiltration or trojan downloading.
+		 ![[Pasted image 20250506063016.png]]
+###### DLL
+- **Command**:
+	```shell
+	python ~/volatility/vol.py dlllist --profile=Win7SP1x64 -f memory.dmp
+	```
+- **Output**:
+	![[Pasted image 20250506064051.png]]
+- **Explanation**:
+	- We can check which DLLs the malwares have been used. For example, we can see the `MSVBVM60.DLL` which caused stack exceptions what we found using Cuckoo.
 ### 5.
 >[!Task Description]
 > Try to use other online tools (*for example, any.run , hybrid analysis, …*), figure out if these online platforms will manage to detect more artifacts than what you have found.
+- I have used Hybrid Analysis
 #### LoveLetter
-- 
-#### Mamba
-- 
+- The file `VBS.LoveLetter.txt.vbs` seemed to be recognized by its hash value, so the analysis didn't take any time
+	![[Pasted image 20250505082757.png]]
+- The malware was previously ran inside three different environments: Windows 10 64-bit, Windows 7 32-bit, Windows 7 64-bit
+	![[Pasted image 20250505082926.png]]
+- Also, it detected a malicious generated files (HTM and VBS) with classification: `ScriptWORM.Generic`
+	![[Pasted image 20250505083021.png]]
+	![[Pasted image 20250505083207.png]]
+- In addition, I got even MIT&RE classification and community feedback
+	![[Pasted image 20250505083116.png]]
+- It even detected that the malware tried to access e-mail address info stored in Outlook
+	![[Pasted image 20250505083711.png]]
+- Basically, it is a really powerful developing cloud-based tool which allows not only check files quickly but also to coordinate them with MITRE ATT&CK techniques and share feedback with community.
+- At the same time **it didn't detect or show** changing in a Internet Explorer start page, for instance. However, Cuckoo contained **more false-positive** signatures triggered.
+#### Vobfus
+- The file `323CANON.EXE_WORM_VOBFUS.SM01` seemed to be recognized by its hash value, so the analysis didn't take any time.
+	![[Pasted image 20250506065149.png]]
+- Besides what Cuckoo have found Hybrid Analysis examined the follwoing risks:
+	<img src="Pasted image 20250506065718.png" width=700 />
+- So, in this case Hybrid Analysis **have found much more interesting details** than Cuckoo have done. Meanwhile, Cuckoo detected prevention of seeing hidden files and the online tool did not.
+#### Conclusion
+- After analyzing two malware I can say that both of these tools are powerful, but each of them missed something that other detected. Therefore, I recommend to use both for detailed and thorough malware analysis.
+#### Comparison
+| Feature                      | **Hybrid Analysis**                                   | **Cuckoo Sandbox**                       |
+| ---------------------------- | ----------------------------------------------------- | ---------------------------------------- |
+| **Deployment**               | Cloud-based service                                   | Self-hosted (on-premises)                |
+| **Analysis Type**            | Combines static and dynamic analysis                  | Primarily dynamic analysis               |
+| **Ease of Use**              | User-friendly web interface                           | Requires setup and configuration         |
+| **Threat Intelligence**      | Integrates with various threat intelligence sources   | Limited built-in threat intelligence     |
+| **Report Generation**        | Comprehensive reports with visualizations             | Detailed reports, but less visualization |
+| **Resource Requirements**    | Utilizes cloud resources                              | Local resources needed for hosting       |
+| **Sample Submission**        | Via web interface (file upload or URL)                | Via web interface or command line        |
+| **Integration Capabilities** | API available for integrations                        | APIs and custom integrations possible    |
+| **Community Support**        | Provides community access but is primarily commercial | Strong open-source community support     |
+##### When to Use Hybrid Analysis:
+- **Quick Analysis**: When you need to quickly analyze malware without the overhead of setting up and maintaining your infrastructure.
+- **Comprehensive Findings**: When you want access to a platform that provides both static and dynamic analysis combined with integrated threat intelligence.
+- **Web-Based Interface**: When you prefer an easier approach to submit samples and view results through a user-friendly online dashboard.
+- **Limited Technical Resources**: When you lack the technical expertise or resources to set up and manage your malware analysis environment.
+##### When to Use Cuckoo Sandbox:
+- **On-Premises Solutions**: When you need to keep your analysis private, especially for sensitive or proprietary data.
+- **Customization Needs**: When you require an analysis platform that is customizable to fit your specific needs or workflows.
+- **Research and Testing**: When you want to set up a controlled environment for extensive research on malware behavior or test variations of malware.
+- **Resource Management**: When you have sufficient resources to run and manage your virtual environments.
+
 ## Task 4 - Static Analysis
 ---
 ### 1.
@@ -245,8 +387,25 @@
 > Use any tool for static analysis of your selected malware (*for example, Ghidra, IDA, Binary Ninja, Hopper, Radare2, …*)
 #### LoveLetter
 - Since the file is a simple Visual Basic script which code can be easily analyzed without any static analysis tool, I skipped this step.
-#### Mamba
-- 
+#### Vobfus
+- First, I Installed **Ghidra** using `snap`
+- Then I launched Ghidra, created a new project, imported the malware, and started analysis
+	![[Pasted image 20250506073141.png]]
+- Unfortunately, decompiler encountered bad instruction data and was not able to decompile anything useful
+	![[Pasted image 20250506074825.png]]
+ - Below are the functions found
+	 ![[Pasted image 20250506075210.png]]
+- Then I checked defined strings which contained a lot of noise, but I found a name of DLL which we discussed
+	![[Pasted image 20250506080024.png]]
+- Also, there some commands could be found
+	![[Pasted image 20250506080208.png]]
+- And other strings which gives an idea that the executable is some game about fighting
+	![[Pasted image 20250506080312.png]]
+- Also, some called functions' names 
+	![[Pasted image 20250506080501.png]]
+- Then I opened disassembler and discovered that the malware contains a lot of zeros in head which may be done to confuse a reader
+	![[Pasted image 20250506080847.png]]
+- Actually, I haven **not found anything** really interesting because **without a decompiler** it is really **hard to analyze** such an executable with no expertise. This executable **strongly rely** on the `msvbvm60.dll` which is a Visual Basic 6 Runtime, so **without knowing how things work** there it is almost **impossible to figure something out**.
 ### 2.
 >[!Task Description]
 > Try to see if there are some artifacts that dynamic analysis did not manage to find, for example a piece of code that did not run inside the sandbox VM.
@@ -255,8 +414,8 @@
 	1. For example, malware replication was not detected since I had no Outlook or mIRC chat on the VM.
 	2. Another block that wasn't executed is download of `WIN-BUGSFIX.exe` because the web-site is currently unavailable. Moreover, to access this site we need to start Internet Explorer and we can got luck with $25\%$ probability only. However, Cuckoo does not start browser during analysis.
 	3. Another important detail is an examination of file formats which would be replaced to `VBS` completely with removal of an original file or just hiding it.
-#### Mamba
-- 
+#### Vobfus
+- Yes, actually some strings were useful such as names of functions and those game elements (`welcome to ERACER`, `use arrow keys...`, `new fighter arrived`, etc.). Maybe it is something to distract analyzer or antivirus because it's hard to imagine which game can be fit in 300Kb. Another reason why I think so is that ERACER is actually a racing game, but other strings imply that the game must be a fighting :)
 ### 3.
 >[!Task Description]
 > Try to describe which method is better (Sandboxing V.S. Static analysis) is better, and which one is more useful in which case.
